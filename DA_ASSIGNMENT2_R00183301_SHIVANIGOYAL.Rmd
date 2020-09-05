@@ -1,0 +1,877 @@
+---
+title: "ASSIGNMENT2 (DATA ANALYTICS)"
+author: "Shivani Goyal(R00183301)"
+date: "12/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Loading the libraries
+
+```{r, echo=FALSE}
+
+library(caret)
+library(gbm)
+library(ggcorrplot)
+library("dplyr")
+library(tidyr)
+library(ggplot2)
+library(corpcor)
+require(pROC)
+library(readxl)
+```
+
+
+#Reading the dataset
+
+```{r, message=FALSE, warning=FALSE}
+RF_TrainingDatasetA_Final <- read_excel("RF_TrainingDatasetA_Final.xlsx")
+```
+
+```{r, message=FALSE, warning=FALSE}
+RF_ScoringDatasetA_Final <- read_excel("RF_ScoringDatasetA_Final.xlsx")
+```
+
+
+**1.(a) EXPLORATORY DATA ANALYSIS**
+
+INTRODUCTION TO DATASET:
+
+Daniel with the hepl of his engineer he has provided the dataset in whicch they have classified 2,186 radio masts as either okay means not influenced by weather conditions and under engineered which means that outage is becausr of weather conditions.
+
+The provided dataset consists of 79 variables which is of high dimentional data. 
+The data has to be cleaned before we can use it for analysis/modelling purposes.
+This data reduction and cleaning is done with several methods:-
+
+1. Dealing with Missing values:- For our dataset, there are 120 null values. These missing values can be handle with different ways depending on the dataset you have and what type of analysis one has to do on it. For our dataset, I am removing these 120 missing values.
+
+
+Renaming the Training and Scoring dataset:
+
+```{r}
+Rf_Training <- RF_TrainingDatasetA_Final
+Rf_Scoring <- RF_ScoringDatasetA_Final
+```
+
+```{r}
+str(Rf_Training)
+```
+
+Below gives the count of null values in the data
+
+```{r}
+sum(is.na(Rf_Training))
+```
+
+NOTE: Here, we see 120 missing data, before proceeding will remove these null values.
+
+Removing the null values
+```{r}
+Rf_Training <- na.omit(Rf_Training)
+```
+
+Recheck the null values
+```{r}
+sum(is.na(Rf_Training))
+```
+
+2. This step is not compulsory. For the convinience, I have converted the response varaible labels to numeric i.e 0 and 1 such that 0 means okay and 1 signifies under.
+
+```{r}
+Rf_Training$Eng_Class <- factor(Rf_Training$Eng_Class,
+                                levels = c("okay","under"),
+                                labels = c(0, 1))
+
+Rf_Training$Eng_Class <- as.numeric(as.character(Rf_Training$Eng_Class))
+```
+
+3. Could remove variables which does not carry information in the analysis. Here, removing 9 variables i.e Antennafilename1 ,Antennafilename2, Antennamodel1, Antennamodel2, Radiofilename1, Radiofilename2, Radiomodel1, Radiomodel2 as these are only indicator variables. Also, removing 1st column i.e RFDBid which is an ID column.  
+
+```{r}
+#removing Antennafilename1, 2 and Radiofilename1,2 and antenna model 1,2 and radiomodel1,2 as these are indicator variables
+Rf_Training1 <- Rf_Training[,-c(1,3,4,11,12,54,55,56,57)]
+Rf_Training1 <- as.data.frame(Rf_Training1)
+
+```
+
+4. Checking Zero and Near Zero- Variance Predictors
+
+Sometimes dataset consists od zero/near-zero variance predictors which need to be removed before modelling. Near zero variance predictors means they have only a handful of unique values that occur with very low frequencies. 
+
+For our datset we checked the class imbalance and found that the predictor "Eng_Class" have a few unique values that are highly imbalanced.
+
+Checking the class imbalance:
+
+```{r}
+data.frame(table(Rf_Training1$Eng_Class))
+```
+
+NOTE: "Okay" count is 1812 and "under" count is 256, so this could lead to zero variance.
+The problem with such case could be that it might happen that these predictors become zero- variance predictors when the data are split and few samples may have an undue influence on the model.
+
+To identify non-zero variance variables we can use nearZeroVar function. 
+Below is the list of such variables which could be removed to overcome this problem:
+
+```{r}
+nzv <- nearZeroVar(Rf_Training1)
+nzv
+```
+
+These “near-zero-variance” predictors may need to be identified and eliminated prior to modeling.Hence, removing such variables from the dataset and further led our dataset to be reduced to 57 variables.
+
+```{r}
+#removing the variables which contributes in zero variance while modeling
+Rf_Training2 <- Rf_Training1[,-nzv]
+dim(Rf_Training2)
+```
+
+NOTE: 2068 rows and 57 variables
+
+5. Checking For Duplicate Columns in the Dataset
+
+Checked the structure of reduced dataset "Rf_Training2" again.
+
+```{r}
+str(Rf_Training2)
+```
+
+Also, checked for duplicate variables. So, we can remove one of such varible.  
+
+```{r}
+all(Rf_Training$RXthresholdcriteria1  == Rf_Training$RXthresholdcriteria2 )
+#both the columns are not same
+all(Rf_Training2$Emissiondesignator1 == Rf_Training2$Emissiondesignator2)
+#both the columns are same
+```
+
+Here, we found that Emissiondesignator1 and Emissiondesignator2 are duplicate of each other. So, removed Emissiondesignator2 from the dataset.
+
+```{r}
+#as both the columns data is same, so could remove one of the variable
+Rf_Training3 <- subset(Rf_Training2,select = -c(Emissiondesignator2))
+dim(Rf_Training3)
+#2068 rows and 56 columns
+names(Rf_Training3)
+```
+
+6. Converting the factor variables to nummeric variables.
+
+There are many techniques to do this task like one- hot encoding. "caret" package also provides the function called "dummyVars" by which one can easily convert the whole datset to numerical data. But, here I have used "ordered()" function and have manually assigned the numbers. The main reason here for not applying "dummyVars" function is because that this could lead to increase in the dimention as the number of variables would have increased with this function.
+
+
+```{r}
+Rf_Training3$Emissiondesignator1 <- ordered(Rf_Training3$Emissiondesignator1,labels = c(1,2,3,4,5,6,7,8,9,10,11,12))
+Rf_Training3$Emissiondesignator1 <- as.numeric(as.character(Rf_Training3$Emissiondesignator1))
+
+Rf_Training3$Polarization <- ordered(Rf_Training3$Polarization,labels = c(0,1))
+Rf_Training3$Polarization <- as.numeric(as.character(Rf_Training3$Polarization))
+#Vertical is 1 and Horizontal is 0
+
+Rf_Training3$RXthresholdcriteria1 <- ordered(Rf_Training3$RXthresholdcriteria1,labels = c(0,1))
+Rf_Training3$RXthresholdcriteria1 <- as.numeric(as.character(Rf_Training3$RXthresholdcriteria1))
+#IE-6 BER is 1 and IE-3 BER is 0
+
+Rf_Training3$RXthresholdcriteria2 <- ordered(Rf_Training3$RXthresholdcriteria2,labels = c(1,2,3))
+Rf_Training3$RXthresholdcriteria2 <- as.numeric(as.character(Rf_Training3$RXthresholdcriteria2))
+#IE-6 BER IS 2, IE-3 BER IS 1 and 23.0 is 3
+
+Rf_Training3$Outcome <- ordered(Rf_Training3$Outcome,labels = c(0,1))
+Rf_Training3$Outcome <- as.numeric(as.character(Rf_Training3$Outcome))
+```
+
+Rechecking the dimention of the dataset
+```{r}
+dim(Rf_Training3)
+```
+
+```{r}
+str(Rf_Training3)
+```
+
+7. Identifying Correlated Predictors
+
+Next step is identifying highly corelated variables. Highly corelated variables could create the problem of multicolinearity and might not be invertible. So, we could remove such variables before building the model. Therefore, this step is included in pre-process step.
+
+Checking the number of highly corelated datapoints.
+
+```{r}
+Rf_TrainCor <-  cor(Rf_Training3)
+highCorr <- sum(abs(Rf_TrainCor[upper.tri(Rf_TrainCor)]) > .999)
+highCorr
+```
+The count of high correlation is 213
+
+displays the detailed summary of corelation matrix
+```{r}
+summary(Rf_TrainCor[upper.tri(Rf_TrainCor)])
+```
+
+NOTE: Highest corelation between variables is 1 and minimum is -1, And the mean is 0.06.
+
+```{r}
+Rf_TrainHighlyCor <- findCorrelation(Rf_TrainCor, cutoff = .80)
+Rf_TrainHighlyCor 
+```
+
+Gives variables which are highly corelated i.e. greater than 0.80 corelation.
+
+Removed highly corelated variables from the dataset,
+
+```{r}
+Rf_Training3 <- Rf_Training3[,-Rf_TrainHighlyCor]
+descrCor2 <- cor(Rf_Training3)
+summary(descrCor2[upper.tri(descrCor2)])
+```
+
+Now, the max corelation magnitude has been reduced to 0.79 and minimum is -0.73.
+
+#Visualising the corelation matrix
+```{r}
+ggcorrplot(descrCor2, method = "square")
+```
+
+Checking the dimention of the further dimensionality reduced data
+
+```{r}
+dim(Rf_Training3)
+```
+
+Now, the data has reduced to 31 variables.
+
+8. Linear Dependencies: 
+
+Checked for liearly dependent variables and further could remove them from the data.
+
+```{r}
+caret::findLinearCombos(Rf_Training3)
+```
+
+NOTE: No Linear Dependencies found in the dataset.
+
+9. The preProcess Function: Centering and Scaling
+
+For machine learning algorithms to work better & efficiently we have to bring all the numeric values on the same scale and this is known as scaling. The majority of and optimization algorithms behave better if features are on the same scale. 
+
+There are 2 techniques:
+
+a.	Normalization: Data is rescaled in the range of 0 to 1. This can improve the performance for algorithms that assign a weight to features such as linear regression and in particular for algorithms that utilize geometric distance such as KNNs.
+
+b.	Standardization: It facilitates the transformation of features to a standard Gaussian(normal) distribution with a mean of 0 and a standard deviation of 1. The scaling happens independently on each individual feature by computing the relevant statistics on the samples in the training set.
+
+This could be easily done by "caret" packae preProcess function.
+
+```{r}
+Rf_pp <- preProcess(Rf_Training3[, -1],
+                     method = c("center", "scale", "YeoJohnson"))
+Rf_pp
+```
+
+```{r}
+transformed <- predict(Rf_pp, newdata = Rf_Training3[, -1])
+head(transformed)
+```
+
+```{r}
+transformed$Eng_Class <- Rf_Training3$Eng_Class
+str(transformed)
+```
+
+Data has been reduced to 31 variables and has 2068 observations. This is our preprocessed dataset on which modeling and analysis will be done. The data variables has been transformed to numerical variables. Also, has been scaled which makes comparision and analysis on same scale. The data is now cleaned. 
+
+########################### 1.(b) ###############################
+
+##b. Set up a training/testing methodology. Using a least 2 models, tune these models and compare your results. Give your best model and comment.
+
+The caret package has a number of functions that are intended to streamline the model building and the assessment process. Here I have build 3 models using random forest, gradient boosting and support vector machine algorithms. Further have compared the models to find the best model for prediction and used "ROC" as an evaluation metric.
+
+1. Train and Test data split
+
+The dataset is splited in 75:25 ratio. That is 75% of data consists training dataset and 25% of the data is of test set.
+
+```{r}
+set.seed(301) 
+inTraining <-createDataPartition(transformed$Eng_Class, p =.75, list =FALSE)
+training <-transformed[ inTraining,] 
+testing  <-transformed[-inTraining,]
+```
+
+Before modeling, converted the "Eng_Class" labels to "okay" and "under".
+
+```{r}
+training$Eng_Class <- as.factor(training$Eng_Class)
+training$Eng_Class <- factor(training$Eng_Class,
+                             levels = c(0, 1),
+                                labels = c("okay","under"))
+```
+
+```{r}
+testing$Eng_Class <- as.factor(testing$Eng_Class)
+testing$Eng_Class <- factor(testing$Eng_Class,
+                             levels = c(0, 1),
+                                labels = c("okay","under"))
+```
+
+Checking the dimensionality of training
+
+```{r}
+dim(training)
+```
+
+The training dataset contains 1551 observations and 31 columns.
+
+Checking the dimensionality of training
+
+```{r}
+dim(testing)
+```
+
+The training dataset contains 517 observations and 31 columns.
+
+2.  Basic Parameter Tuning and fitting the models
+
+
+10 fold cross validation:
+
+In below result we used repeatedcv method to divide our dataset into 10 folds cross-validation and repeat 3 times. I will hold back validation set for back testing.
+
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                            number = 10,
+                            repeats = 3,
+                            ## Estimate class probabilities
+                            classProbs = TRUE,
+                            ## Evaluate performance using 
+                            ## the following function
+                            summaryFunction = twoClassSummary,
+                            savePredictions = TRUE)
+
+```
+
+
+**Model 1: Using Random Forest Technique**
+
+Tunning algorithm will help to control training proccess and gain better result.
+The two main tunning parameters in random forest model is mtry and ntree. 
+
+mtry: Number of variable is randomly collected to be sampled at each split time.
+ntree: Number of branches will grow after each time split.
+
+Tuning the parameters
+
+```{r}
+set.seed(301)
+tunegrid <- expand.grid(mtry = c(sqrt(ncol(subset(training,select = -c(Eng_Class))))))
+```
+
+Fitting the model and named "rfFit":
+
+```{r}
+set.seed(301)
+rfFit <- train(Eng_Class ~.,
+               data = training,
+                method = "rf",
+                metric = "ROC",
+                tuneGrid = tunegrid,
+                ntree = 1000,
+                trControl = fitControl)
+
+rfFit
+```
+
+Making prediction on test set
+
+```{r}
+p_test1 <- predict(rfFit, newdata = testing)
+predict(rfFit, newdata = head(testing))
+```
+
+Confusion matrix on test data
+
+```{r}
+confusionMatrix(p_test1, testing$Eng_Class)
+```
+
+The number of correctly predictions - (464+35)= 499 </br>
+The number of wrong predictions - (14+4) = 18 </br>
+Therefore accuracy is - 96.5% </br>
+
+**Model 2: Using Gradient Boostig Technique**
+
+Parameter Tuning
+
+1. Interaction Depth: Range [1,5,9]
+2. n.trees set to (1:30)*50
+3. shrinkage to 0.1 
+4. n.minobsinnode to 20
+
+```{r}
+set.seed(301) 
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+```
+
+Fitting the model
+
+```{r}
+set.seed(301) 
+gbmFit <- train(Eng_Class ~ ., data = training, 
+                method = "gbm", 
+                trControl = fitControl, 
+                verbose = FALSE, 
+                tuneGrid = gbmGrid,
+                ## Specify which metric to optimize
+                metric = "ROC")
+
+gbmFit
+```
+
+In this case, the average area under the ROC curve associated with the optimal tuning parameters is 0.98 across the 100 resamples.
+
+Checking the best parameter for gbm model
+
+```{r}
+whichTwoPct <- tolerance(gbmFit$results, metric = "ROC",
+                         tol = 2, maximize = TRUE)
+```
+
+Displays the best tuned parameters used for modeling
+
+```{r}
+gbmFit$results[whichTwoPct,1:6]
+```
+
+This results that we can get the less complex model with an area under the ROC curve of 0.987 compared to pick the best value.
+
+Making prediction on test set
+
+```{r}
+p_test <- predict(gbmFit, newdata = testing)
+predict(gbmFit, newdata = head(testing))
+```
+
+Confusion matrix on test data
+
+```{r}
+confusionMatrix(p_test, testing$Eng_Class)
+```
+
+The number of correctly predictions - (464+44)= 508
+The number of wrong predictions - (4+5) = 9
+Therefore accuracy is - 98.2%
+
+**Model 3: SVM (Support Vector machine)**
+
+```{r}
+set.seed(301)
+svmFit <- train(Eng_Class ~ ., data = training, 
+                 method = "svmRadial",
+                 metric = "ROC",
+                 tuneLength = 12,
+                 trControl = fitControl)
+svmFit
+```
+
+Tuning parameter 'sigma' was held constant at a value of 0.02571014.
+ROC was used to select the optimal model using the largest value.
+The final values used for the model were sigma = 0.02571014 and C = 8.
+
+Making prediction on test set,
+
+```{r}
+p_test2 <- predict(svmFit, newdata = testing)
+predict(svmFit, newdata = head(testing))
+```
+
+Confusion matrix on test data
+
+```{r}
+confusionMatrix(p_test2, testing$Eng_Class)
+```
+
+NOTE: Accuracy is 96.5% 
+
+
+**Comparing the three models**
+
+We first collected the resampling results using resamples,
+
+```{r}
+resamps <- resamples(list(RF = rfFit,
+                          GBM = gbmFit,
+                          SVM = svmFit))
+resamps
+```
+
+Displays the summary
+
+```{r}
+summary(resamps)
+```
+
+
+There are several lattice plot methods that can be used to visualize the resampling
+distributions: density plots, box-whisker plots, scatterplot matrices and scatterplots of summary statistics. For example:
+
+**Plot 1: Box-whisker plots**
+
+```{r}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col = rgb(.2, .2, .2, .4)
+theme1$plot.symbol$pch = 16
+theme1$plot.line$col = rgb(1, 0, 0, .7)
+theme1$plot.line$lwd <- 2
+trellis.par.set(theme1)
+bwplot(resamps, layout = c(3, 1))
+```
+
+**Plot2: ROC**
+
+```{r}
+trellis.par.set(caretTheme())
+dotplot(resamps, metric = "ROC")
+```
+
+NOTE: From the above analysis, we got the best model which is "gbmFit" model. It gives the best model as compared to other models.
+
+**Plotting the Resampling Profile of the best fit model in accordance to our dataset.**
+
+```{r}
+plot(gbmFit)
+```
+
+############################### 1.(c) #################################
+#c) Perform feature selection on your model in c). 
+#Explain how you do this, giving a rational and comment on your results.
+
+
+The best way for feature selection is provided in caret package which is a popular automatic method for feature selection provided by the caret R package known as Recursive Feature Elimination or RFE.
+
+Automatic feature selection methods can be used to build many models with different subsets of a dataset and identify those attributes that are and are not required to build an accurate model.It works similarly as stepwise regression model works.
+
+There is also one more additional way to do feature selection is to find the highly corelated variables and could remove them. This could help to build better model as it removes the multicolinearity problem. Here, we have already performed this step while pre-processing the data. So, not necessary to repeat this step.
+
+There is one more way to select the best features to build the model on is by using varImp function provided in the gbm package. It lists the variables used in the modeling with respect to their Relative Influence value.
+
+This gives the important features used while building our model. Below is the code which estimates the list of 20 important variables used. From them we could get the information on which feature we need to keep and which to not.
+
+Estimate variable importance:
+
+```{r}
+importance <- varImp(gbmFit , scale=FALSE)
+```
+
+```{r}
+# summarize importance
+print(importance)
+```
+
+We can visualise the importance of each variable which is measured by Relative.influence
+
+```{r}
+# plot importance
+plot(importance)
+```
+
+From 30 variables, got 8 important features which are "FlatfademarginmultipathdB1", "FreespacelossdB", "FrequencyMHz", "AtmosphericabsorptionlossdB","Polarization", "Pathlengthkm", "R_Powerfd2" and "R_Powerfd1". 
+
+Now we will subset these 8 variables from the dataset and then will build the model using gbm algorithm as earlier it gave us the best result compared to other machine learning algorithms, this will give the best model which will be suitable for predicting the Eng_class.
+
+Subseting the important features selected from training dataset
+
+```{r}
+final_tr <- subset(training,select = c(FlatfademarginmultipathdB1,
+                                           FreespacelossdB,
+                                           FrequencyMHz,
+                                           AtmosphericabsorptionlossdB,
+                                           Polarization,
+                                           Pathlengthkm,
+                                           R_Powerfd2,
+                                           R_Powerfd1,
+                                       Eng_Class))
+
+```
+
+
+Subseting the important features selected from testing dataset
+
+```{r}
+final_test <- subset(testing,select = c(FlatfademarginmultipathdB1,
+                                       FreespacelossdB,
+                                       FrequencyMHz,
+                                       AtmosphericabsorptionlossdB,
+                                       Polarization,
+                                       Pathlengthkm,
+                                       R_Powerfd2,
+                                       R_Powerfd1,
+                                       Eng_Class))
+```
+
+Displays the structure of final train and test dataset
+ 
+```{r}
+str(final_tr)
+```
+
+```{r}
+str(final_test)
+```
+
+So, will build the model using these 8 variables. Here, will be repeating the earlier steps to build the gbmRf model.
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 3,
+                           ## Estimate class probabilities
+                           classProbs = TRUE,
+                           ## Evaluate performance using 
+                           ## the following function
+                           summaryFunction = twoClassSummary,
+                           savePredictions = TRUE)
+```
+
+Parameter tuning:
+
+```{r}
+set.seed(301) 
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+```
+
+Fitting the model:
+
+```{r}
+set.seed(301) 
+finalgbmFit <- train(Eng_Class ~ ., data = final_tr, 
+                method = "gbm", 
+                trControl = fitControl, 
+                verbose = FALSE, 
+                tuneGrid = gbmGrid,
+                ## Specify which metric to optimize
+                metric = "ROC")
+
+finalgbmFit
+```
+
+In this case, the average area under the ROC curve associated with the optimal tuning parameters was 0.99 across the 100 resamples.
+
+Choosing the final model:
+
+```{r}
+whichTwoPct <- tolerance(finalgbmFit$results, metric = "ROC",
+                         tol = 2, maximize = TRUE)
+```
+
+```{r}
+finalgbmFit$results[whichTwoPct,1:6]
+```
+
+It results that we can get the less complex model with an area under the ROC curve of 0.99 compared to pick the best value. The best parameter for prediction are whe interaction.depth is 5, n.trees is 50, shrinkage and n.minobsinnode kept constant at 0.1 and 20.
+
+Making prediction on test set:
+
+```{r}
+predCheck <- predict(finalgbmFit, newdata = final_test)
+predict(finalgbmFit, newdata = head(final_test))
+```
+
+Confusion matrix on test data:
+
+```{r}
+confusionMatrix(predCheck, testing$Eng_Class)
+```
+
+RESULT: The Balanced Accuracy is 98.5%. </br> 
+Out of total observations 517, 5 were missclassified.
+
+Visualisation of the Final Model
+
+```{r}
+trellis.par.set(caretTheme())
+plot(finalgbmFit)
+```
+
+############################### 1.(d) ##########################################
+
+The best model for predicting the "under" or "okay" of "Eng_Class" attribute depending on various other features is "finalgbmFit" model. This model is build using gbm algorithm. Gbm means Gradient Boosting Algorithm. First let me tell you how this algorithm works and how it is the best model for predicting the Eng_Class.
+When we try to predict the target variable using any machine learning technique, the main causes of difference in actual and predicted values are noise, variance, and bias. As name has word boosting this means the method of onverting weak learner into strong learners.
+
+In boosting what happens is that each new tree is fitted on the new dataset such that this new dataset is the modified version of the original dataset.
+It is an ensemble technique widely used for regression and classification problem.This strategy is based on the logic in which the subsequent predictors learn from the errors of the previous predictors.
+
+Since new predictors learn from the mistakes made by previous predictors, it takes fewer time / iterations to get close to the actual predictions. But we need to carefully choose the stopping criteria, or it could lead to over-equipped training results.It is an example of a booster algorithm. To know how gbm algorithm works, one should have clear concept of Adaboosting method. 
+
+In AdaBoost the forest of trees are made such that these trees are just a node and two leaves called Stumps. While In random Forest the each time tree we make is of full size and there is no predetermined maximum depth.So, in Adaboost it creates the forest of Stumps. Stumps are not great at making accurate classifications.Stumps are technically “weak learners”. In a Random Forest each decision tree is made independently of the others.However, in Adaboost, order is important. The errors that the first stump makes influences on how the second stump is made and the errors that the second stump makes influences similarly on third stump.
+
+In breif, We first model data with simple models and analyze data for errors.These errors signify data points that are difficult to fit by a simple model. Then for later models, we particularly focus on those hard to fit data to get them right.In the end, we combine all the predictors by giving some weights to each predictor. 
+
+We used caret package to build the model and tuned the hyper-parameters and got best model when shreinkage which gives the learning rate is kept at costant to 0.1 and n.minobsinnode to 20. It gave best result when number of trees used is 200 and interaction.depth to 9. The performance of the model has been evaluated using ROC metic. ROC stands for receiver operating curve. This model covers around 98.5% of area.
+
+We tested the model on valudation set. As a result we were able to classify 512 Eng_Classs correctly. Out of total observations 517, 5 were missclassified. Allover, it gave us 98.5% of accuracy which is good for prediction.
+
+**COST/LOSS FUNCTION:**
+
+There are two types of Loss that are a) Training Loss and b) Validation Loss.<br> 
+Training Loss is the function that is optimized on the training data while Validation Loss is the function that is used to evaluate the performance of the model on an unseen data i.e. validation set. For example, in the case of a classifier, this is often the area under the curve of the receiver operating characteristic (ROC) — though this is never directly optimized, because it is not differentiable. This is often called the “performance or evaluation metric”.
+In gradient boostig, training loss is a function that is optimized by gradient descent. Specifically, the training loss gradient is used to adjust the target variables for each successive tree.
+
+Validation Loss is used to tune hyperparameters. And to minimise the cost/loss function for our model did hypertuning of parameters. It could be validated by auc(area under curve) of ROC. More the area better the model is.
+
+**PLotting ROC curve for both training and testing dataset**
+
+On training data:
+
+```{r}
+gbmFit3Roc <- roc(response = finalgbmFit$pred$obs, predictor = finalgbmFit$pred$okay,levels = rev(levels(finalgbmFit$pred$obs)))
+```
+
+```{r}
+plot(gbmFit3Roc, legacy.axes = TRUE, main= "ROC Curve")
+```
+
+Below is the area covered under ROC curve while validating on training dataset
+```{r}
+auc(gbmFit3Roc)
+```
+
+On test data:
+
+```{r}
+p2_test <- predict(finalgbmFit, newdata = final_test, type = "prob")
+```
+
+```{r}
+gbmFit3Roc2 <- roc(response = testing$Eng_Class, predictor = p2_test$okay,levels = rev(levels(testing$Eng_Class)))
+```
+
+```{r}
+plot(gbmFit3Roc2, legacy.axes = TRUE, main = "ROC CURVE")
+```
+
+Below is the area covered under ROC curve while validating on testing dataset
+```{r}
+auc(gbmFit3Roc2)
+```
+
+############################### 1.(e) ##########################################
+
+Stating the question,
+"Daniel is primarily concerned with finding the under engineered masts as these are the ones that cause outages, so incorrectly ‘scoring’ a mast as under when is it okay is not as bad as incorrectly ‘scoring’ a mast as okay when it is under; you can take the ratio here of misclassification ‘costs’ as 1:h, where h = {8, 16, 24}, i.e. h can take a value of 8, 16 or 24. Redo your modelling using your best model above and comment on your new results." 
+
+Here, what I unterstood is that here the main concern of Daniel is that he wants to reduce the cost error. As from buisness point of view his concern is valid as 'scoring' a mast as 'okay' when in actual it is 'under' is as risky as diagnosing a deceased person as Healthy. Traditionally, machine learning algorithms are trained on a dataset and seek to minimize error.
+A range of functions can be used to calculate the error of a model on training data, and the more general term is referred to as loss.In cost-sensitive learning, a penalty associated with an incorrect prediction and is referred to as a “cost.”
+
+Next part of the question suggests to take the misclassification 'costs' ratio here as 1:h such that h is 8,16 and 24. 
+
+Which means, wants to tune the misclassification costs ratio in primary step before building model while tuning. This will reduce the probability of misclassifying scoring a mast as 'okay'.
+
+Did some research on it tried to tune this by using function 'loss' and assigning it the costmatrix. Below is the code I tried but did now worked for my model as this functions works good for random forest algorithm.
+
+costMatrix1 <- matrix(c(0,16,1,0), nrow=2)
+
+gbmCM1 <- train(Eng_Class ~ ., data = final_tr, 
+               method = "rf", 
+               trControl = fitControl, 
+               verbose = FALSE, 
+               parms = list(loss=costMatrix1))
+               
+
+Also, tried another way for gbm. I found there is one parameter available for gbm algorithm 'bag.fraction'. Adding this means introducing stochastic gradient descent. Adding this seems to help, there may be some local minimas in our loss function gradient.    
+
+gbmGridCM <-  expand.grid(interaction.depth = c(1, 5, 9), 
+            n.trees = (1:30)*50, 
+                         shrinkage = 0.1,
+                         n.minobsinnode = 20,
+                         bag.fraction = c(.125, .062, .041))
+
+Tried to give here the ratio of 1:8 equivalent to 0.125, 1:16 to 0.062 and ratio of 1:24 as 0.041. And tried to fit the model using gbm algorithm. Albiet, got an error as "Error:The tuning parameter grid should have columns n.trees, interaction.depth, shrinkage, n.minobsinnode".
+
+
+############################### 1.(f) ############################################
+
+##f) Using the scoring data set provided predict whether these radio masts will 
+##be okay or under engineered using your best model to part d) and comment.
+
+Below is the structure of scoring dataset on which prediction has to make,
+
+```{r}
+str(Rf_Scoring)
+```
+
+Subseting the features which are used while building the model from Scoring dataset
+
+```{r}
+Rf_Scoring_pp <- subset(Rf_Scoring,select = c(FlatfademarginmultipathdB1,
+                                            FreespacelossdB,
+                                            FrequencyMHz,
+                                            AtmosphericabsorptionlossdB,
+                                            Polarization,
+                                            Pathlengthkm,
+                                            R_Powerfd2,
+                                            R_Powerfd1))
+```
+
+Converting the class to dataframe,
+
+```{r}
+Rf_Scoring_pp <- as.data.frame(Rf_Scoring_pp)
+```
+
+Checking the structure and dimention, 
+
+```{r}
+str(Rf_Scoring_pp)
+dim(Rf_Scoring_pp)
+```
+
+Here, we have 936 observations and 8 variables in scoring dataset.
+
+Converting the factor variable to numerical,
+
+```{r}
+Rf_Scoring_pp$Polarization <- ordered(Rf_Scoring_pp$Polarization,labels = c(0,1))
+Rf_Scoring_pp$Polarization <- as.numeric(as.character(Rf_Scoring_pp$Polarization))
+```
+
+Centring and Scaling the data,
+
+```{r}
+Rf_pp1 <- preProcess(Rf_Scoring_pp,
+                    method = c("center", "scale", "YeoJohnson"))
+Rf_pp1
+```
+
+Scaling and centring the variables,
+
+```{r}
+scoringTrans <- predict(Rf_pp1, newdata = Rf_Scoring_pp)
+head(scoringTrans)
+summary(scoringTrans)
+```
+
+Making prediction on Scoring Dataset
+
+```{r}
+scoringTrans$Eng_Class <- predict(finalgbmFit, newdata = scoringTrans)
+predict(finalgbmFit, newdata = head(scoringTrans))
+```
+
+Below is the count of ech predicted class of Eng_Class attribute.
+
+```{r}
+sum(scoringTrans$Eng_Class == "okay")
+```
+
+```{r}
+sum(scoringTrans$Eng_Class =="under")
+```
+
+
